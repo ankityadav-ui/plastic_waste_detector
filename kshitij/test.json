@@ -1,0 +1,14 @@
+{
+  "zoneId": "Z-101",
+  "metricsLast24h": {
+    "totalDetections": 12,
+    "avgConfidence": 0.8
+  },
+  "metricsPrev24h": {
+    "totalDetections": 6
+  },
+  "environment": {
+    "humidity": 70,
+    "crowdIndex": 0.6
+  }
+}

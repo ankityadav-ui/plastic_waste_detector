@@ -1,0 +1,17 @@
+2026-02-14 13:58:33,978 | INFO | Server starting...
+2026-02-14 13:58:33,996 | INFO | [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.20.231.242:5000
+2026-02-14 13:58:33,996 | INFO | [33mPress CTRL+C to quit[0m
+2026-02-14 14:12:07,213 | INFO | Server starting...
+2026-02-14 14:12:07,227 | INFO | [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.20.231.242:5000
+2026-02-14 14:12:07,227 | INFO | [33mPress CTRL+C to quit[0m
+2026-02-14 14:14:19,146 | INFO | Health check accessed
+2026-02-14 14:14:19,148 | INFO | 127.0.0.1 - - [14/Feb/2026 14:14:19] "GET / HTTP/1.1" 200 -
+2026-02-14 14:14:50,533 | INFO | Prediction request received
+2026-02-14 14:14:50,533 | INFO | Prediction generated | zone=Z-101 risk=46 confidence=0.48
+2026-02-14 14:14:50,533 | INFO | 127.0.0.1 - - [14/Feb/2026 14:14:50] "POST /predict-risk HTTP/1.1" 200 -

@@ -1,0 +1,14 @@
+{
+  "zoneId": "Z-202",
+  "metricsLast24h": {
+    "totalDetections": 10,
+    "avgConfidence": 0.75
+  },
+  "metricsPrev24h": {
+    "totalDetections": 9
+  },
+  "environment": {
+    "humidity": 60,
+    "crowdIndex": 0.5
+  }
+}
