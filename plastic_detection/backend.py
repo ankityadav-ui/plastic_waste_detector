@@ -1,17 +1,3 @@
-"""
-=============================================================================
- PLASTIC DETECTION — FastAPI Backend Server
-=============================================================================
-
- Receives detection events from detector.py and stores them.
- Provides REST endpoints for the dashboard, prediction, and image upload.
-
- Run:
-   uvicorn backend:app --reload --port 8000
-
-=============================================================================
-"""
-
 import io
 import json
 import logging
@@ -29,19 +15,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Literal
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOGGING
-# ─────────────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("backend")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DATA MODELS
-# ─────────────────────────────────────────────────────────────────────────────
 
 VALID_PLASTIC_TYPES = [
     "plastic_bottle", "plastic_bag", "plastic_wrapper",
@@ -55,7 +34,6 @@ class DetectionEvent(BaseModel):
     plasticType: str = Field(..., examples=["plastic_bottle"])
     confidence: float = Field(..., ge=0.0, le=1.0)
     timestamp: str = Field(..., examples=["2026-02-14T12:00:00"])
-    # Material classification fields (optional for backward compat)
     itemType: str | None = Field(None, examples=["Plastic Bottle"])
     material: str | None = Field(None, examples=["PET"])
     materialName: str | None = Field(None, examples=["Polyethylene Terephthalate"])
@@ -70,17 +48,11 @@ class StatsResponse(BaseModel):
     latest: list[DetectionEvent]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STORAGE
-# ─────────────────────────────────────────────────────────────────────────────
-
-# In-memory store (replace with DB in production)
 detections: list[dict] = []
 LOG_FILE = Path("detections_log.json")
 
 
 def _load_log_file() -> None:
-    """Load previous detections from log file on startup."""
     if LOG_FILE.is_file():
         count = 0
         with open(LOG_FILE, "r") as f:
@@ -97,21 +69,15 @@ def _load_log_file() -> None:
 
 
 def _append_to_log(records: list[dict]) -> None:
-    """Append records to the JSON-lines log file."""
     with open(LOG_FILE, "a") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DETECTOR (lazy-loaded for /detect/image endpoint)
-# ─────────────────────────────────────────────────────────────────────────────
-
 _detector = None
 
 
 def _get_detector():
-    """Lazy-load the PlasticDetector so the server starts fast."""
     global _detector
     if _detector is None:
         try:
@@ -120,16 +86,9 @@ def _get_detector():
             log.info("PlasticDetector loaded for image detection endpoint")
         except Exception as exc:
             log.error("Failed to load detector: %s", exc)
-            raise HTTPException(
-                status_code=503,
-                detail=f"Detector not available: {exc}",
-            )
+            raise HTTPException(status_code=503, detail=f"Detector not available: {exc}")
     return _detector
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# APP LIFECYCLE
-# ─────────────────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -154,10 +113,6 @@ app.add_middleware(
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ENDPOINTS
-# ─────────────────────────────────────────────────────────────────────────────
-
 @app.get("/")
 def root():
     return {"status": "online", "module": "Plastic Detection Backend", "version": "2.0.0"}
@@ -165,7 +120,6 @@ def root():
 
 @app.get("/health")
 def health():
-    """Health check endpoint."""
     return {
         "status": "healthy",
         "detections_stored": len(detections),
@@ -175,22 +129,15 @@ def health():
 
 @app.post("/report")
 def report_detection(event: DetectionEvent):
-    """Receive a single detection event from the detector module."""
     record = event.model_dump()
     record["received_at"] = datetime.now(timezone.utc).isoformat()
     detections.append(record)
     _append_to_log([record])
-
-    return {
-        "status": "accepted",
-        "total": len(detections),
-        "event": record,
-    }
+    return {"status": "accepted", "total": len(detections), "event": record}
 
 
 @app.post("/report/batch")
 def report_batch(events: list[DetectionEvent]):
-    """Receive multiple detection events at once."""
     results = []
     for event in events:
         record = event.model_dump()
@@ -199,12 +146,7 @@ def report_batch(events: list[DetectionEvent]):
         results.append(record)
 
     _append_to_log(results)
-
-    return {
-        "status": "accepted",
-        "count": len(results),
-        "total": len(detections),
-    }
+    return {"status": "accepted", "count": len(results), "total": len(detections)}
 
 
 @app.post("/detect/image")
@@ -213,11 +155,6 @@ async def detect_image(
     zone: str = Query("Z-101", description="Monitoring zone ID"),
     conf: float = Query(0.4, ge=0.0, le=1.0, description="Confidence threshold"),
 ):
-    """
-    Upload an image and get plastic detection results.
-    Returns annotated image with bounding boxes + detection metadata.
-    """
-    # Validate file type
     if file.content_type and not file.content_type.startswith("image/"):
         raise HTTPException(400, "File must be an image (JPEG/PNG)")
 
@@ -225,19 +162,16 @@ async def detect_image(
     if not contents:
         raise HTTPException(400, "Empty file")
 
-    # Decode image
     nparr = np.frombuffer(contents, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if frame is None:
         raise HTTPException(400, "Could not decode image")
 
-    # Run detection
     detector = _get_detector()
     detector.conf_threshold = conf
     results = detector.detect(frame)
     detector.draw(frame, results)
 
-    # Store events
     events = []
     for det in results:
         record = {
@@ -258,7 +192,6 @@ async def detect_image(
     if events:
         _append_to_log(events)
 
-    # Encode annotated image
     _, img_encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
     img_bytes = io.BytesIO(img_encoded.tobytes())
 
@@ -267,16 +200,14 @@ async def detect_image(
         media_type="image/jpeg",
         headers={
             "X-Detections-Count": str(len(results)),
-            "X-Detections": json.dumps(
-                [{
-                    "type": d["plastic_type"],
-                    "item": d.get("item_type", ""),
-                    "material": d.get("material", ""),
-                    "resin_code": d.get("resin_code", 7),
-                    "recyclable": d.get("recyclable", False),
-                    "confidence": d["confidence"],
-                } for d in results]
-            ),
+            "X-Detections": json.dumps([{
+                "type": d["plastic_type"],
+                "item": d.get("item_type", ""),
+                "material": d.get("material", ""),
+                "resin_code": d.get("resin_code", 7),
+                "recyclable": d.get("recyclable", False),
+                "confidence": d["confidence"],
+            } for d in results]),
         },
     )
 
@@ -287,7 +218,6 @@ def get_detections(
     zone: str | None = None,
     plastic_type: str | None = None,
 ):
-    """Retrieve recent detections with optional filters."""
     filtered = detections
 
     if zone:
@@ -295,15 +225,11 @@ def get_detections(
     if plastic_type:
         filtered = [d for d in filtered if d.get("plasticType") == plastic_type]
 
-    return {
-        "total": len(filtered),
-        "detections": filtered[-limit:][::-1],  # newest first
-    }
+    return {"total": len(filtered), "detections": filtered[-limit:][::-1]}
 
 
 @app.get("/stats")
 def get_stats():
-    """Get aggregated detection statistics."""
     by_type: dict[str, int] = {}
     by_zone: dict[str, int] = {}
     by_material: dict[str, int] = {}
@@ -337,14 +263,9 @@ def get_stats():
 
 @app.delete("/detections")
 def clear_detections():
-    """Clear all stored detections (for testing)."""
     detections.clear()
     return {"status": "cleared"}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN
-# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     uvicorn.run("backend:app", host="0.0.0.0", port=8000, reload=True)

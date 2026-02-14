@@ -1,20 +1,3 @@
-"""
-=============================================================================
- PLASTIC DETECTION — Real-Time Detection Engine
-=============================================================================
-
- Uses YOLOv4-tiny (OpenCV DNN) to detect plastic waste in real-time from
- webcam, video files, or images.  COCO classes are mapped to plastic
- categories.  Optionally reports detections to the FastAPI backend.
-
- Usage:
-   python detector.py --mode webcam
-   python detector.py --mode image  --source photo.jpg
-   python detector.py --mode video  --source clip.mp4 --send --zone Z-101
-
-=============================================================================
-"""
-
 import argparse
 import json
 import logging
@@ -30,14 +13,10 @@ import numpy as np
 
 try:
     import requests
-
     HAS_REQUESTS = True
 except ImportError:
     HAS_REQUESTS = False
 
-# ─────────────────────────────────────────────────────────────────────────────
-# LOGGING
-# ─────────────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -45,11 +24,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("detector")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CONSTANTS & COCO → PLASTIC MATERIAL CLASSIFICATION
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Resin identification codes (recycling triangle numbers)
 RESIN_CODES = {
     "PET":   {"code": 1, "name": "Polyethylene Terephthalate", "recyclable": True},
     "HDPE":  {"code": 2, "name": "High-Density Polyethylene",  "recyclable": True},
@@ -60,235 +34,219 @@ RESIN_CODES = {
     "OTHER": {"code": 7, "name": "Other Plastics",             "recyclable": False},
 }
 
-# Comprehensive COCO → plastic classification knowledge base.
-# Each entry maps a COCO class name to its most likely plastic properties.
-#   item_type    : what the plastic item actually is
-#   is_plastic   : whether this object is typically made of plastic
-#   material     : most common resin type (PET, HDPE, PVC, LDPE, PP, PS, OTHER)
-#   recyclable   : whether this material is commonly recyclable
-#   resin_code   : recycling triangle number (1-7)
-#   description  : brief explanation of the material
-
 PLASTIC_MAP: dict[str, dict] = {
-    # ── Plastic Bottles & Containers ──
     "bottle": {
-        "item_type":   "Plastic Bottle",
-        "is_plastic":  True,
-        "material":    "PET",
-        "resin_code":  1,
-        "recyclable":  True,
-        "description": "PET water/soda bottles — most commonly recycled plastic",
+        "item_type": "Plastic Bottle",
+        "is_plastic": True,
+        "material": "PET",
+        "resin_code": 1,
+        "recyclable": True,
+        "description": "PET water/soda bottles",
     },
     "cup": {
-        "item_type":   "Plastic Cup",
-        "is_plastic":  True,
-        "material":    "PP",
-        "resin_code":  5,
-        "recyclable":  True,
-        "description": "Polypropylene cups — microwaveable, widely recycled",
+        "item_type": "Plastic Cup",
+        "is_plastic": True,
+        "material": "PP",
+        "resin_code": 5,
+        "recyclable": True,
+        "description": "Polypropylene cups",
     },
     "wine glass": {
-        "item_type":   "Plastic Cup/Glass",
-        "is_plastic":  True,
-        "material":    "PS",
-        "resin_code":  6,
-        "recyclable":  False,
-        "description": "Polystyrene disposable glass — NOT recyclable",
+        "item_type": "Plastic Cup/Glass",
+        "is_plastic": True,
+        "material": "PS",
+        "resin_code": 6,
+        "recyclable": False,
+        "description": "Polystyrene disposable glass",
     },
     "bowl": {
-        "item_type":   "Plastic Bowl",
-        "is_plastic":  True,
-        "material":    "PP",
-        "resin_code":  5,
-        "recyclable":  True,
-        "description": "Polypropylene food container — recyclable",
+        "item_type": "Plastic Bowl",
+        "is_plastic": True,
+        "material": "PP",
+        "resin_code": 5,
+        "recyclable": True,
+        "description": "Polypropylene food container",
     },
     "vase": {
-        "item_type":   "Plastic Container",
-        "is_plastic":  True,
-        "material":    "PET",
-        "resin_code":  1,
-        "recyclable":  True,
-        "description": "PET container — commonly recycled",
+        "item_type": "Plastic Container",
+        "is_plastic": True,
+        "material": "PET",
+        "resin_code": 1,
+        "recyclable": True,
+        "description": "PET container",
     },
-    # ── Plastic Bags & Carriers ──
     "handbag": {
-        "item_type":   "Plastic Bag",
-        "is_plastic":  True,
-        "material":    "LDPE",
-        "resin_code":  4,
-        "recyclable":  True,
-        "description": "LDPE shopping/carry bag — recyclable at drop-off points",
+        "item_type": "Plastic Bag",
+        "is_plastic": True,
+        "material": "LDPE",
+        "resin_code": 4,
+        "recyclable": True,
+        "description": "LDPE shopping/carry bag",
     },
     "backpack": {
-        "item_type":   "Plastic Bag (Large)",
-        "is_plastic":  True,
-        "material":    "LDPE",
-        "resin_code":  4,
-        "recyclable":  True,
-        "description": "LDPE/HDPE large carry bag — recyclable at drop-off points",
+        "item_type": "Plastic Bag (Large)",
+        "is_plastic": True,
+        "material": "LDPE",
+        "resin_code": 4,
+        "recyclable": True,
+        "description": "LDPE/HDPE large carry bag",
     },
     "suitcase": {
-        "item_type":   "Plastic Container (Large)",
-        "is_plastic":  True,
-        "material":    "HDPE",
-        "resin_code":  2,
-        "recyclable":  True,
-        "description": "HDPE rigid container — recyclable curbside",
+        "item_type": "Plastic Container (Large)",
+        "is_plastic": True,
+        "material": "HDPE",
+        "resin_code": 2,
+        "recyclable": True,
+        "description": "HDPE rigid container",
     },
     "umbrella": {
-        "item_type":   "Plastic Item",
-        "is_plastic":  True,
-        "material":    "OTHER",
-        "resin_code":  7,
-        "recyclable":  False,
-        "description": "Mixed plastic/nylon — NOT recyclable",
+        "item_type": "Plastic Item",
+        "is_plastic": True,
+        "material": "OTHER",
+        "resin_code": 7,
+        "recyclable": False,
+        "description": "Mixed plastic/nylon",
     },
-    # ── Plastic Wrappers & Packaging ──
     "cell phone": {
-        "item_type":   "Plastic Wrapper/Casing",
-        "is_plastic":  True,
-        "material":    "OTHER",
-        "resin_code":  7,
-        "recyclable":  False,
-        "description": "Mixed plastic casing — e-waste, NOT regular recycling",
+        "item_type": "Plastic Wrapper/Casing",
+        "is_plastic": True,
+        "material": "OTHER",
+        "resin_code": 7,
+        "recyclable": False,
+        "description": "Mixed plastic casing — e-waste",
     },
     "remote": {
-        "item_type":   "Plastic Casing",
-        "is_plastic":  True,
-        "material":    "PP",
-        "resin_code":  5,
-        "recyclable":  True,
-        "description": "Polypropylene plastic casing — recyclable",
+        "item_type": "Plastic Casing",
+        "is_plastic": True,
+        "material": "PP",
+        "resin_code": 5,
+        "recyclable": True,
+        "description": "Polypropylene plastic casing",
     },
     "toothbrush": {
-        "item_type":   "Plastic Hygiene Item",
-        "is_plastic":  True,
-        "material":    "PP",
-        "resin_code":  5,
-        "recyclable":  False,
-        "description": "Polypropylene handle — NOT recyclable (mixed materials)",
+        "item_type": "Plastic Hygiene Item",
+        "is_plastic": True,
+        "material": "PP",
+        "resin_code": 5,
+        "recyclable": False,
+        "description": "Polypropylene handle — mixed materials",
     },
     "scissors": {
-        "item_type":   "Plastic Handle Item",
-        "is_plastic":  True,
-        "material":    "PP",
-        "resin_code":  5,
-        "recyclable":  False,
-        "description": "Polypropylene handles — NOT recyclable (mixed materials)",
+        "item_type": "Plastic Handle Item",
+        "is_plastic": True,
+        "material": "PP",
+        "resin_code": 5,
+        "recyclable": False,
+        "description": "Polypropylene handles — mixed materials",
     },
     "mouse": {
-        "item_type":   "Plastic Casing",
-        "is_plastic":  True,
-        "material":    "OTHER",
-        "resin_code":  7,
-        "recyclable":  False,
+        "item_type": "Plastic Casing",
+        "is_plastic": True,
+        "material": "OTHER",
+        "resin_code": 7,
+        "recyclable": False,
         "description": "ABS/mixed plastic casing — e-waste",
     },
     "keyboard": {
-        "item_type":   "Plastic Casing",
-        "is_plastic":  True,
-        "material":    "OTHER",
-        "resin_code":  7,
-        "recyclable":  False,
+        "item_type": "Plastic Casing",
+        "is_plastic": True,
+        "material": "OTHER",
+        "resin_code": 7,
+        "recyclable": False,
         "description": "ABS/mixed plastic casing — e-waste",
     },
-    # ── Food-related Plastic ──
     "fork": {
-        "item_type":   "Plastic Cutlery",
-        "is_plastic":  True,
-        "material":    "PS",
-        "resin_code":  6,
-        "recyclable":  False,
-        "description": "Polystyrene single-use cutlery — NOT recyclable",
+        "item_type": "Plastic Cutlery",
+        "is_plastic": True,
+        "material": "PS",
+        "resin_code": 6,
+        "recyclable": False,
+        "description": "Polystyrene single-use cutlery",
     },
     "knife": {
-        "item_type":   "Plastic Cutlery",
-        "is_plastic":  True,
-        "material":    "PS",
-        "resin_code":  6,
-        "recyclable":  False,
-        "description": "Polystyrene single-use cutlery — NOT recyclable",
+        "item_type": "Plastic Cutlery",
+        "is_plastic": True,
+        "material": "PS",
+        "resin_code": 6,
+        "recyclable": False,
+        "description": "Polystyrene single-use cutlery",
     },
     "spoon": {
-        "item_type":   "Plastic Cutlery",
-        "is_plastic":  True,
-        "material":    "PS",
-        "resin_code":  6,
-        "recyclable":  False,
-        "description": "Polystyrene single-use cutlery — NOT recyclable",
+        "item_type": "Plastic Cutlery",
+        "is_plastic": True,
+        "material": "PS",
+        "resin_code": 6,
+        "recyclable": False,
+        "description": "Polystyrene single-use cutlery",
     },
-    # ── Containers & Storage ──
     "refrigerator": {
-        "item_type":   "Plastic Appliance",
-        "is_plastic":  True,
-        "material":    "HDPE",
-        "resin_code":  2,
-        "recyclable":  True,
-        "description": "HDPE panels — recyclable in bulk/industrial recycling",
+        "item_type": "Plastic Appliance",
+        "is_plastic": True,
+        "material": "HDPE",
+        "resin_code": 2,
+        "recyclable": True,
+        "description": "HDPE panels — industrial recycling",
     },
     "microwave": {
-        "item_type":   "Plastic Appliance",
-        "is_plastic":  True,
-        "material":    "PP",
-        "resin_code":  5,
-        "recyclable":  False,
-        "description": "Polypropylene casing — e-waste, NOT regular recycling",
+        "item_type": "Plastic Appliance",
+        "is_plastic": True,
+        "material": "PP",
+        "resin_code": 5,
+        "recyclable": False,
+        "description": "Polypropylene casing — e-waste",
     },
     "sink": {
-        "item_type":   "Plastic Fixture",
-        "is_plastic":  True,
-        "material":    "PVC",
-        "resin_code":  3,
-        "recyclable":  False,
-        "description": "PVC plumbing fixture — NOT recyclable (hazardous)",
+        "item_type": "Plastic Fixture",
+        "is_plastic": True,
+        "material": "PVC",
+        "resin_code": 3,
+        "recyclable": False,
+        "description": "PVC plumbing fixture",
     },
     "toilet": {
-        "item_type":   "Plastic Fixture",
-        "is_plastic":  True,
-        "material":    "PVC",
-        "resin_code":  3,
-        "recyclable":  False,
-        "description": "PVC/HDPE plumbing — NOT recyclable",
+        "item_type": "Plastic Fixture",
+        "is_plastic": True,
+        "material": "PVC",
+        "resin_code": 3,
+        "recyclable": False,
+        "description": "PVC/HDPE plumbing",
     },
-    # ── Other common plastic items ──
     "book": {
-        "item_type":   "Plastic-Wrapped Item",
-        "is_plastic":  True,
-        "material":    "LDPE",
-        "resin_code":  4,
-        "recyclable":  True,
-        "description": "LDPE shrink-wrap/lamination — recyclable at drop-off",
+        "item_type": "Plastic-Wrapped Item",
+        "is_plastic": True,
+        "material": "LDPE",
+        "resin_code": 4,
+        "recyclable": True,
+        "description": "LDPE shrink-wrap/lamination",
     },
     "laptop": {
-        "item_type":   "Plastic Casing",
-        "is_plastic":  True,
-        "material":    "OTHER",
-        "resin_code":  7,
-        "recyclable":  False,
+        "item_type": "Plastic Casing",
+        "is_plastic": True,
+        "material": "OTHER",
+        "resin_code": 7,
+        "recyclable": False,
         "description": "ABS/polycarbonate casing — e-waste",
     },
     "tvmonitor": {
-        "item_type":   "Plastic Casing",
-        "is_plastic":  True,
-        "material":    "OTHER",
-        "resin_code":  7,
-        "recyclable":  False,
+        "item_type": "Plastic Casing",
+        "is_plastic": True,
+        "material": "OTHER",
+        "resin_code": 7,
+        "recyclable": False,
         "description": "ABS/polycarbonate casing — e-waste",
     },
     "hair drier": {
-        "item_type":   "Plastic Appliance",
-        "is_plastic":  True,
-        "material":    "PP",
-        "resin_code":  5,
-        "recyclable":  False,
+        "item_type": "Plastic Appliance",
+        "is_plastic": True,
+        "material": "PP",
+        "resin_code": 5,
+        "recyclable": False,
         "description": "Polypropylene casing — e-waste",
     },
 }
 
-# Helper: get the "plastic_type" category from the detailed map
+
 def _get_plastic_category(info: dict) -> str:
-    """Map item to high-level category based on item_type."""
     item = info["item_type"].lower()
     if "bottle" in item or "cup" in item or "glass" in item or "bowl" in item or "container" in item:
         return "plastic_bottle"
@@ -301,42 +259,30 @@ def _get_plastic_category(info: dict) -> str:
     else:
         return "plastic_wrapper"
 
-# Colours per category (BGR)
+
 COLORS: dict[str, tuple[int, int, int]] = {
-    "plastic_bottle":  (0, 255, 0),      # green
-    "plastic_bag":     (0, 165, 255),     # orange
-    "plastic_wrapper": (0, 0, 255),       # red
-    "plastic_cutlery": (255, 0, 255),     # magenta
-    "plastic_casing":  (255, 255, 0),     # cyan
+    "plastic_bottle":  (0, 255, 0),
+    "plastic_bag":     (0, 165, 255),
+    "plastic_wrapper": (0, 0, 255),
+    "plastic_cutlery": (255, 0, 255),
+    "plastic_casing":  (255, 255, 0),
 }
 
-# Recyclability colours
-COLOR_RECYCLABLE     = (0, 200, 0)    # green
-COLOR_NOT_RECYCLABLE = (0, 0, 200)    # red
+COLOR_RECYCLABLE = (0, 200, 0)
+COLOR_NOT_RECYCLABLE = (0, 0, 200)
+DEFAULT_COLOR = (255, 255, 0)
 
-DEFAULT_COLOR = (255, 255, 0)  # cyan fallback
-
-# Model paths (relative to this file)
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "model"
-# Full YOLOv4 (accurate) — use yolov4-tiny for speed on weak hardware
 CFG_PATH = MODEL_DIR / "yolov4.cfg"
 WEIGHTS_PATH = MODEL_DIR / "yolov4.weights"
 NAMES_PATH = MODEL_DIR / "coco.names"
-
-# Tiny fallback paths (for --tiny flag)
 CFG_PATH_TINY = MODEL_DIR / "yolov4-tiny.cfg"
 WEIGHTS_PATH_TINY = MODEL_DIR / "yolov4-tiny.weights"
 
-# Backend defaults
 BACKEND_URL = "http://localhost:8000"
 REPORT_ENDPOINT = "/report"
 BATCH_ENDPOINT = "/report/batch"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# YOLO DETECTOR CLASS
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class PlasticDetector:
@@ -359,27 +305,20 @@ class PlasticDetector:
         self.input_size = input_size
         self.multi_scale = multi_scale
         self.temporal_smooth = temporal_smooth
-
-        # Temporal smoothing state (tracks recent detections across frames)
         self._history: list[list[dict]] = []
-        self._history_len = 5  # number of frames to remember
+        self._history_len = 5
 
-        # ── Load class names ──
         self.class_names = self._load_names(names)
         log.info("Loaded %d COCO class names", len(self.class_names))
 
-        # ── Build lookup: COCO-index → plastic info (only mapped classes) ──
         self.index_to_plastic: dict[int, dict] = {}
         for idx, name in enumerate(self.class_names):
             if name in PLASTIC_MAP:
                 info = PLASTIC_MAP[name].copy()
                 info["plastic_type"] = _get_plastic_category(info)
                 self.index_to_plastic[idx] = info
-        log.info(
-            "Mapped %d COCO classes → plastic categories", len(self.index_to_plastic)
-        )
+        log.info("Mapped %d COCO classes to plastic categories", len(self.index_to_plastic))
 
-        # ── Load network ──
         cfg_str, weights_str = str(cfg), str(weights)
         if not os.path.isfile(cfg_str):
             log.error("Config not found: %s", cfg_str)
@@ -389,9 +328,8 @@ class PlasticDetector:
             sys.exit(1)
 
         self.net = cv2.dnn.readNetFromDarknet(cfg_str, weights_str)
-        log.info("Loaded YOLOv4-tiny network")
+        log.info("Loaded YOLOv4 network")
 
-        # ── GPU acceleration (if available) ──
         if use_gpu:
             self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
             self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
@@ -400,20 +338,15 @@ class PlasticDetector:
             self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
             self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
-        # ── Get output layer names ──
         layer_names = self.net.getLayerNames()
         try:
-            # OpenCV 4.x
             out_indices = self.net.getUnconnectedOutLayers().flatten()
         except AttributeError:
             out_indices = self.net.getUnconnectedOutLayers()
         self.output_layers = [layer_names[i - 1] for i in out_indices]
 
-    # ── helpers ──
-
     @staticmethod
     def _load_names(path: str | Path) -> list[str]:
-        """Read class names file, one name per line."""
         p = Path(path)
         if not p.is_file():
             log.error("Names file not found: %s", p)
@@ -421,14 +354,8 @@ class PlasticDetector:
         with open(p, "r") as f:
             return [line.strip() for line in f if line.strip()]
 
-    # ── preprocessing ──
-
     @staticmethod
     def _preprocess(frame: np.ndarray) -> np.ndarray:
-        """
-        Enhance frame for better detection in varied lighting.
-        Uses CLAHE (adaptive histogram equalization) on the L channel.
-        """
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -436,12 +363,9 @@ class PlasticDetector:
         enhanced = cv2.merge([l, a, b])
         return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
 
-    # ── single-scale inference ──
-
     def _detect_at_scale(self, frame: np.ndarray, input_size: int) -> tuple[
         list[list[int]], list[float], list[int]
     ]:
-        """Run YOLO at a specific input resolution. Returns raw boxes, confs, class_ids."""
         h, w = frame.shape[:2]
         blob = cv2.dnn.blobFromImage(
             frame, 1 / 255.0, (input_size, input_size),
@@ -479,10 +403,7 @@ class PlasticDetector:
 
         return boxes, confidences, class_ids
 
-    # ── temporal smoothing ──
-
     def _iou(self, box_a: tuple, box_b: tuple) -> float:
-        """Compute IoU between two (x, y, w, h) boxes."""
         ax, ay, aw, ah = box_a
         bx, by, bw, bh = box_b
         x1 = max(ax, bx)
@@ -494,11 +415,6 @@ class PlasticDetector:
         return inter / union if union > 0 else 0.0
 
     def _apply_temporal_smoothing(self, detections: list[dict]) -> list[dict]:
-        """
-        Boost confidence of detections that appear consistently across recent
-        frames, and recover detections from recent history if they disappeared
-        for only 1-2 frames (reduces flickering).
-        """
         self._history.append(detections)
         if len(self._history) > self._history_len:
             self._history.pop(0)
@@ -506,7 +422,6 @@ class PlasticDetector:
         if len(self._history) < 2:
             return detections
 
-        # Boost current detections that match history
         for det in detections:
             match_count = 0
             for past_frame in self._history[:-1]:
@@ -515,50 +430,25 @@ class PlasticDetector:
                             and self._iou(det["box"], past_det["box"]) > 0.3):
                         match_count += 1
                         break
-            # Boost confidence for consistent detections
             if match_count >= 2:
                 det["confidence"] = min(det["confidence"] * 1.15, 0.99)
                 det["confidence"] = round(det["confidence"], 4)
 
-        # Recover recent detections that vanished (fill gaps)
         current_boxes = [d["box"] for d in detections]
         for past_det in (self._history[-2] if len(self._history) >= 2 else []):
             matched = any(
                 self._iou(past_det["box"], cb) > 0.3 for cb in current_boxes
             )
             if not matched and past_det["confidence"] > 0.35:
-                # Re-inject with decayed confidence
                 recovered = dict(past_det)
                 recovered["confidence"] = round(past_det["confidence"] * 0.85, 4)
                 detections.append(recovered)
 
         return detections
 
-    # ── core detection ──
-
     def detect(self, frame: np.ndarray) -> list[dict]:
-        """
-        Run inference on a single BGR frame.
-
-        Returns a list of dicts:
-            {
-                "label":        "bottle",         # COCO class name
-                "plastic_type": "plastic_bottle",  # high-level category
-                "item_type":    "Plastic Bottle",  # specific item description
-                "is_plastic":   True,              # is it plastic?
-                "material":     "PET",             # resin type
-                "material_name":"Polyethylene Terephthalate",
-                "resin_code":   1,                 # recycling triangle number
-                "recyclable":   True,              # can it be recycled?
-                "description":  "PET water/soda bottles...",
-                "confidence":   0.87,
-                "box":          (x, y, w, h),
-            }
-        """
-        # Preprocess for better contrast/lighting
         enhanced = self._preprocess(frame)
 
-        # Multi-scale detection: run at multiple resolutions and merge
         all_boxes: list[list[int]] = []
         all_confs: list[float] = []
         all_cids: list[int] = []
@@ -576,7 +466,6 @@ class PlasticDetector:
             all_confs.extend(c)
             all_cids.extend(ids)
 
-        # Final NMS across all scales
         results: list[dict] = []
         if all_boxes:
             indices = cv2.dnn.NMSBoxes(
@@ -589,33 +478,27 @@ class PlasticDetector:
                     cid = all_cids[i]
                     info = self.index_to_plastic[cid]
                     resin = RESIN_CODES.get(info["material"], RESIN_CODES["OTHER"])
-                    results.append(
-                        {
-                            "label": self.class_names[cid],
-                            "plastic_type": info["plastic_type"],
-                            "item_type": info["item_type"],
-                            "is_plastic": info["is_plastic"],
-                            "material": info["material"],
-                            "material_name": resin["name"],
-                            "resin_code": info["resin_code"],
-                            "recyclable": info["recyclable"],
-                            "description": info["description"],
-                            "confidence": round(all_confs[i], 4),
-                            "box": tuple(all_boxes[i]),
-                        }
-                    )
+                    results.append({
+                        "label": self.class_names[cid],
+                        "plastic_type": info["plastic_type"],
+                        "item_type": info["item_type"],
+                        "is_plastic": info["is_plastic"],
+                        "material": info["material"],
+                        "material_name": resin["name"],
+                        "resin_code": info["resin_code"],
+                        "recyclable": info["recyclable"],
+                        "description": info["description"],
+                        "confidence": round(all_confs[i], 4),
+                        "box": tuple(all_boxes[i]),
+                    })
 
-        # Temporal smoothing for stable detections across frames
         if self.temporal_smooth:
             results = self._apply_temporal_smoothing(results)
 
         return results
 
-    # ── drawing ──
-
     @staticmethod
     def draw(frame: np.ndarray, detections: list[dict]) -> np.ndarray:
-        """Draw bounding boxes with material info, recyclability on frame."""
         for det in detections:
             x, y, bw, bh = det["box"]
             ptype = det["plastic_type"]
@@ -629,44 +512,22 @@ class PlasticDetector:
             recycle_tag = "RECYCLABLE" if recyclable else "NOT RECYCLABLE"
             recycle_color = COLOR_RECYCLABLE if recyclable else COLOR_NOT_RECYCLABLE
 
-            # Line 1: Item + confidence
             line1 = f"{item_type} {conf:.0%}"
-            # Line 2: Material + resin code
             line2 = f"{material} (#{resin}) | {recycle_tag}"
 
-            # Rectangle
             cv2.rectangle(frame, (x, y), (x + bw, y + bh), color, 2)
 
-            # Label background — line 1
-            (tw1, th1), bl1 = cv2.getTextSize(
-                line1, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1,
-            )
-            cv2.rectangle(
-                frame, (x, y - th1 - bl1 - 4), (x + tw1 + 4, y), color, -1,
-            )
-            cv2.putText(
-                frame, line1, (x + 2, y - bl1 - 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA,
-            )
+            (tw1, th1), bl1 = cv2.getTextSize(line1, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(frame, (x, y - th1 - bl1 - 4), (x + tw1 + 4, y), color, -1)
+            cv2.putText(frame, line1, (x + 2, y - bl1 - 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
-            # Label background — line 2 (below box)
-            (tw2, th2), bl2 = cv2.getTextSize(
-                line2, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1,
-            )
+            (tw2, th2), bl2 = cv2.getTextSize(line2, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             y2 = y + bh + th2 + bl2 + 4
-            cv2.rectangle(
-                frame, (x, y + bh), (x + tw2 + 4, y2), recycle_color, -1,
-            )
-            cv2.putText(
-                frame, line2, (x + 2, y2 - bl2 - 2),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA,
-            )
+            cv2.rectangle(frame, (x, y + bh), (x + tw2 + 4, y2), recycle_color, -1)
+            cv2.putText(frame, line2, (x + 2, y2 - bl2 - 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
         return frame
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BACKEND REPORTER
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class BackendReporter:
@@ -684,12 +545,11 @@ class BackendReporter:
         self.url = url.rstrip("/")
         self.zone_id = zone_id
         self.batch_size = batch_size
-        self.cooldown = cooldown  # seconds between reports of the same type
+        self.cooldown = cooldown
         self._last_report: dict[str, float] = {}
         self._buffer: list[dict] = []
 
     def _should_report(self, plastic_type: str) -> bool:
-        """Rate-limit reports per plastic type to avoid flooding."""
         now = time.time()
         last = self._last_report.get(plastic_type, 0)
         if now - last >= self.cooldown:
@@ -698,7 +558,6 @@ class BackendReporter:
         return False
 
     def report(self, detections: list[dict]) -> None:
-        """Buffer and send detections to backend."""
         if not HAS_REQUESTS:
             return
 
@@ -718,12 +577,10 @@ class BackendReporter:
             }
             self._buffer.append(event)
 
-        # Flush when buffer is full
         if len(self._buffer) >= self.batch_size:
             self._flush()
 
     def _flush(self) -> None:
-        """Send buffered events to backend."""
         if not self._buffer:
             return
         try:
@@ -740,7 +597,7 @@ class BackendReporter:
                     timeout=3,
                 )
             if r.ok:
-                log.debug("Reported %d event(s) → backend", len(self._buffer))
+                log.debug("Reported %d event(s) to backend", len(self._buffer))
             else:
                 log.warning("Backend responded %d: %s", r.status_code, r.text[:200])
         except requests.ConnectionError:
@@ -751,22 +608,10 @@ class BackendReporter:
             self._buffer.clear()
 
     def flush_remaining(self) -> None:
-        """Call at shutdown to send any leftover events."""
         self._flush()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RUNNERS  (webcam / video / image)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _overlay_info(
-    frame: np.ndarray,
-    fps: float,
-    count: int,
-    zone: str,
-) -> None:
-    """Draw FPS and detection count on the top-left corner."""
+def _overlay_info(frame: np.ndarray, fps: float, count: int, zone: str) -> None:
     info_lines = [
         f"FPS: {fps:.1f}",
         f"Detections: {count}",
@@ -774,14 +619,10 @@ def _overlay_info(
     ]
     for i, line in enumerate(info_lines):
         y = 22 + i * 22
-        cv2.putText(
-            frame, line, (10, y),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA,
-        )
-        cv2.putText(
-            frame, line, (10, y),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA,
-        )
+        cv2.putText(frame, line, (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, line, (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA)
 
 
 def run_webcam(
@@ -792,7 +633,6 @@ def run_webcam(
     no_display: bool = False,
     save_output: Optional[str] = None,
 ) -> None:
-    """Continuous webcam detection loop."""
     cap = cv2.VideoCapture(camera_idx)
     if not cap.isOpened():
         log.error("Cannot open webcam (index %d)", camera_idx)
@@ -809,7 +649,7 @@ def run_webcam(
             t0 = time.time()
             ret, frame = cap.read()
             if not ret:
-                log.warning("Failed to read frame — retrying…")
+                log.warning("Failed to read frame — retrying")
                 time.sleep(0.1)
                 continue
 
@@ -817,16 +657,13 @@ def run_webcam(
             total_detections += len(detections)
             frame_count += 1
 
-            # Draw
             detector.draw(frame, detections)
             fps = 1.0 / max(time.time() - t0, 1e-6)
             _overlay_info(frame, fps, len(detections), zone)
 
-            # Report to backend
             if reporter and detections:
                 reporter.report(detections)
 
-            # Save video output
             if save_output and writer is None:
                 h, w = frame.shape[:2]
                 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -834,19 +671,15 @@ def run_webcam(
             if writer:
                 writer.write(frame)
 
-            # Display
             if not no_display:
                 cv2.imshow("Plastic Detection", frame)
                 key = cv2.waitKey(1) & 0xFF
-                if key == ord("q") or key == 27:  # q or Esc
+                if key == ord("q") or key == 27:
                     break
             else:
-                # In headless mode, just log periodically
                 if frame_count % 100 == 0:
-                    log.info(
-                        "Frame %d | FPS %.1f | Detections this frame: %d",
-                        frame_count, fps, len(detections),
-                    )
+                    log.info("Frame %d | FPS %.1f | Detections: %d",
+                             frame_count, fps, len(detections))
     except KeyboardInterrupt:
         log.info("Interrupted by user")
     finally:
@@ -856,10 +689,7 @@ def run_webcam(
         if writer:
             writer.release()
         cv2.destroyAllWindows()
-        log.info(
-            "Done — %d frames processed, %d total detections",
-            frame_count, total_detections,
-        )
+        log.info("Done — %d frames, %d total detections", frame_count, total_detections)
 
 
 def run_video(
@@ -870,7 +700,6 @@ def run_video(
     no_display: bool = False,
     save_output: Optional[str] = None,
 ) -> None:
-    """Process a video file frame-by-frame."""
     if not os.path.isfile(source):
         log.error("Video file not found: %s", source)
         sys.exit(1)
@@ -882,7 +711,6 @@ def run_video(
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     input_fps = cap.get(cv2.CAP_PROP_FPS) or 30
-
     log.info("Video: %s (%d frames @ %.1f FPS)", source, total_frames, input_fps)
 
     writer = None
@@ -920,7 +748,6 @@ def run_video(
                 if key == ord("q") or key == 27:
                     break
 
-            # Progress
             if frame_count % 50 == 0:
                 pct = frame_count / max(total_frames, 1) * 100
                 log.info("Progress: %d/%d (%.0f%%)", frame_count, total_frames, pct)
@@ -933,10 +760,8 @@ def run_video(
         if writer:
             writer.release()
         cv2.destroyAllWindows()
-        log.info(
-            "Done — %d/%d frames, %d total detections",
-            frame_count, total_frames, total_detections,
-        )
+        log.info("Done — %d/%d frames, %d total detections",
+                 frame_count, total_frames, total_detections)
 
 
 def run_image(
@@ -947,7 +772,6 @@ def run_image(
     no_display: bool = False,
     save_output: Optional[str] = None,
 ) -> None:
-    """Detect plastic in a single image (or a directory of images)."""
     paths: list[str] = []
     if os.path.isdir(source):
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -972,23 +796,18 @@ def run_image(
 
         detections = detector.detect(frame)
         detector.draw(frame, detections)
-        log.info(
-            "%s — %d detection(s): %s",
-            img_path,
-            len(detections),
-            [d["plastic_type"] for d in detections] if detections else "none",
-        )
+        log.info("%s — %d detection(s): %s", img_path, len(detections),
+                 [d["plastic_type"] for d in detections] if detections else "none")
 
         if reporter and detections:
             reporter.report(detections)
 
-        # Save annotated output
         out_path = save_output
         if out_path is None:
             stem = Path(img_path).stem
             out_path = str(BASE_DIR / f"{stem}_detected.jpg")
         cv2.imwrite(out_path, frame)
-        log.info("Saved → %s", out_path)
+        log.info("Saved: %s", out_path)
 
         if not no_display:
             cv2.imshow("Plastic Detection", frame)
@@ -1002,128 +821,34 @@ def run_image(
     cv2.destroyAllWindows()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Plastic Waste Detection Engine (YOLOv4 / Hybrid Pipeline)",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python detector.py --mode webcam
-  python detector.py --mode webcam --tiny          # faster, less accurate
-  python detector.py --mode image --source photo.jpg
-  python detector.py --mode video --source clip.mp4
-  python detector.py --mode webcam --send --zone Z-101
-  python detector.py --mode video --source clip.mp4 --save output.mp4
-
-Hybrid pipeline (requires PyTorch):
-  python detector.py --mode webcam --use-taco
-  python detector.py --mode webcam --use-taco --use-classifier
-  python detector.py --mode image  --source photo.jpg --use-taco --taco-weights model/taco/taco_maskrcnn.pth
-  python detector.py --mode webcam --use-taco --use-classifier --detection-threshold 0.6 --classification-threshold 0.8
-        """,
     )
-    p.add_argument(
-        "--mode", choices=["webcam", "video", "image"], default="webcam",
-        help="Detection mode (default: webcam)",
-    )
-    p.add_argument(
-        "--source", type=str, default=None,
-        help="Path to image/video file or image directory",
-    )
-    p.add_argument(
-        "--camera", type=int, default=0,
-        help="Webcam device index (default: 0)",
-    )
-    p.add_argument(
-        "--conf", type=float, default=0.25,
-        help="Confidence threshold (default: 0.25)",
-    )
-    p.add_argument(
-        "--nms", type=float, default=0.5,
-        help="NMS threshold (default: 0.5)",
-    )
-    p.add_argument(
-        "--size", type=int, default=608,
-        help="YOLO input size (default: 608)",
-    )
-    p.add_argument(
-        "--no-multiscale", action="store_true",
-        help="Disable multi-scale inference (faster but less accurate)",
-    )
-    p.add_argument(
-        "--no-smooth", action="store_true",
-        help="Disable temporal smoothing across frames",
-    )
-    p.add_argument(
-        "--zone", type=str, default="Z-101",
-        help="Monitoring zone ID (default: Z-101)",
-    )
-    p.add_argument(
-        "--send", action="store_true",
-        help="Send detections to backend API",
-    )
-    p.add_argument(
-        "--backend-url", type=str, default=BACKEND_URL,
-        help=f"Backend API URL (default: {BACKEND_URL})",
-    )
-    p.add_argument(
-        "--no-display", action="store_true",
-        help="Run in headless mode (no GUI window)",
-    )
-    p.add_argument(
-        "--save", type=str, default=None,
-        help="Save annotated output to file",
-    )
-    p.add_argument(
-        "--gpu", action="store_true",
-        help="Use CUDA GPU acceleration (requires OpenCV with CUDA)",
-    )
-    p.add_argument(
-        "--tiny", action="store_true",
-        help="Use YOLOv4-tiny instead of full YOLOv4 (faster, less accurate)",
-    )
-    p.add_argument(
-        "--verbose", action="store_true",
-        help="Enable debug-level logging",
-    )
-    # ── Hybrid pipeline flags ──
-    p.add_argument(
-        "--use-taco", action="store_true",
-        help="Enable SSDLite320-MobileNetV3 waste detector (Stage 1 — requires PyTorch)",
-    )
-    p.add_argument(
-        "--use-classifier", action="store_true",
-        help="Enable MobileNetV3-Small resin classifier (Stage 2 — requires PyTorch)",
-    )
-    p.add_argument(
-        "--taco-weights", type=str, default=None,
-        help="Path to SSDLite320 waste detector weights (.pth)",
-    )
-    p.add_argument(
-        "--classifier-weights", type=str, default=None,
-        help="Path to MobileNetV3-Small resin classifier weights (.pth)",
-    )
-    p.add_argument(
-        "--trashnet-weights", type=str, default=None,
-        help="Path to TrashNet MobileNetV3-Small weights (.pth)",
-    )
-    p.add_argument(
-        "--detection-threshold", type=float, default=0.5,
-        help="TACO detection confidence threshold (default: 0.5)",
-    )
-    p.add_argument(
-        "--classification-threshold", type=float, default=0.7,
-        help="Resin classification confidence threshold (default: 0.7)",
-    )
-    p.add_argument(
-        "--frame-skip", type=int, default=3,
-        help="Process every Nth frame in hybrid mode for speed (default: 3)",
-    )
+    p.add_argument("--mode", choices=["webcam", "video", "image"], default="webcam")
+    p.add_argument("--source", type=str, default=None)
+    p.add_argument("--camera", type=int, default=0)
+    p.add_argument("--conf", type=float, default=0.25)
+    p.add_argument("--nms", type=float, default=0.5)
+    p.add_argument("--size", type=int, default=608)
+    p.add_argument("--no-multiscale", action="store_true")
+    p.add_argument("--no-smooth", action="store_true")
+    p.add_argument("--zone", type=str, default="Z-101")
+    p.add_argument("--send", action="store_true")
+    p.add_argument("--backend-url", type=str, default=BACKEND_URL)
+    p.add_argument("--no-display", action="store_true")
+    p.add_argument("--save", type=str, default=None)
+    p.add_argument("--gpu", action="store_true")
+    p.add_argument("--tiny", action="store_true")
+    p.add_argument("--verbose", action="store_true")
+    p.add_argument("--use-taco", action="store_true")
+    p.add_argument("--use-classifier", action="store_true")
+    p.add_argument("--taco-weights", type=str, default=None)
+    p.add_argument("--classifier-weights", type=str, default=None)
+    p.add_argument("--trashnet-weights", type=str, default=None)
+    p.add_argument("--detection-threshold", type=float, default=0.5)
+    p.add_argument("--classification-threshold", type=float, default=0.7)
+    p.add_argument("--frame-skip", type=int, default=3)
     return p.parse_args()
 
 
@@ -1133,12 +858,10 @@ def main() -> None:
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Validate source for non-webcam modes
     if args.mode in ("video", "image") and not args.source:
         log.error("--source is required for %s mode", args.mode)
         sys.exit(1)
 
-    # ── Check for hybrid pipeline ──
     use_hybrid = args.use_taco or args.use_classifier
     hybrid_detector = None
 
@@ -1147,13 +870,9 @@ def main() -> None:
             from hybrid_detector import HybridPlasticDetector
             log.info("Hybrid detection pipeline enabled")
         except ImportError:
-            log.error(
-                "hybrid_detector module not found. "
-                "Ensure hybrid_detector.py is in the same directory."
-            )
+            log.error("hybrid_detector module not found.")
             sys.exit(1)
 
-    # Select model (full vs tiny) — always built as YOLO fallback
     if args.tiny:
         cfg = CFG_PATH_TINY
         weights = WEIGHTS_PATH_TINY
@@ -1163,7 +882,6 @@ def main() -> None:
         weights = WEIGHTS_PATH
         log.info("Using full YOLOv4 (high accuracy mode)")
 
-    # Build YOLO detector (used directly or as fallback for hybrid)
     yolo_detector = PlasticDetector(
         cfg=cfg,
         weights=weights,
@@ -1175,7 +893,6 @@ def main() -> None:
         temporal_smooth=not args.no_smooth,
     )
 
-    # ── Build hybrid pipeline (if requested) ──
     if use_hybrid:
         try:
             hybrid_detector = HybridPlasticDetector(
@@ -1195,37 +912,25 @@ def main() -> None:
             log.warning("Falling back to YOLO-only detection")
             hybrid_detector = None
 
-    # Choose the active detector (hybrid wraps YOLO as fallback)
     active_detector = hybrid_detector if hybrid_detector else yolo_detector
 
-    # Build reporter
     reporter = None
     if args.send:
         if not HAS_REQUESTS:
-            log.error("Install 'requests' to use --send:  pip install requests")
+            log.error("Install 'requests' to use --send: pip install requests")
             sys.exit(1)
         reporter = BackendReporter(url=args.backend_url, zone_id=args.zone)
-        log.info("Backend reporting enabled → %s (zone %s)", args.backend_url, args.zone)
+        log.info("Backend reporting enabled: %s (zone %s)", args.backend_url, args.zone)
 
-    # Dispatch
     if args.mode == "webcam":
-        run_webcam(
-            active_detector, camera_idx=args.camera, zone=args.zone,
-            reporter=reporter, no_display=args.no_display,
-            save_output=args.save,
-        )
+        run_webcam(active_detector, camera_idx=args.camera, zone=args.zone,
+                   reporter=reporter, no_display=args.no_display, save_output=args.save)
     elif args.mode == "video":
-        run_video(
-            active_detector, source=args.source, zone=args.zone,
-            reporter=reporter, no_display=args.no_display,
-            save_output=args.save,
-        )
+        run_video(active_detector, source=args.source, zone=args.zone,
+                  reporter=reporter, no_display=args.no_display, save_output=args.save)
     elif args.mode == "image":
-        run_image(
-            active_detector, source=args.source, zone=args.zone,
-            reporter=reporter, no_display=args.no_display,
-            save_output=args.save,
-        )
+        run_image(active_detector, source=args.source, zone=args.zone,
+                  reporter=reporter, no_display=args.no_display, save_output=args.save)
 
 
 if __name__ == "__main__":
